@@ -5,7 +5,9 @@ const path = require("path");
 const { exec } = require("node:child_process"); // Node.js v16+ allows "node:" prefix for built-in modules
 const { parse } = require("smol-toml");
 const StreamZip = require("node-stream-zip");
-
+const JSZip = require("jszip");
+const { getCfData } = require("./libs/cfCommunication");
+const crypto = require("crypto")
 // Native helper to replace shell.which
 function which(cmd) {
     return new Promise((resolve) => {
@@ -115,18 +117,9 @@ async function importFromModrinth(mrPath, outPath, packwizLoc, nameOverride) {
 }
 
 // Import From CurseForge (.zip)
-async function importFromCurseforge(zipPath, outPath, packwizLoc, nameOverride) {
+async function importFromCurseforge(zipPath, outPath, nameOverride) {
     return new Promise(async (resolve, reject) => {
         try {
-            if (!packwizLoc) {
-                packwizLoc = await which("packwiz");
-                if (!packwizLoc) {
-                    reject("No Packwiz exe found! Please Add to Path or declare manually");
-                    return;
-                }
-            }
-            packwizLoc = path.resolve(packwizLoc.toString());
-
             if (!fs.existsSync(zipPath)) {
                 reject("FILE_NOT_EXIST");
                 return;
@@ -140,11 +133,229 @@ async function importFromCurseforge(zipPath, outPath, packwizLoc, nameOverride) 
             const name_over = nameOverride || path.parse(zipPath).name;
             fs.mkdirSync(path.join(outPath, name_over), { recursive: true });
 
-            const command = `curseforge import ${zipPath}`;
-            await runPackwiz(packwizLoc, command, path.join(outPath, name_over));
+            const zipBuffer = await fs.readFileSync(zipPath);
+            // Grab Modpack Info
+            const zip = await JSZip.loadAsync(zipBuffer);
+
+            let zipFiles = Object.keys(zip.files);
+
+            // Check for Valid File
+            if (!zipFiles.includes('manifest.json')) {
+                reject("NOT_VALID_ZIP")
+                return;
+            };
+
+            // Get Manifest File
+
+            let manifestFileRaw = await zip.files['manifest.json'].async('string');
+            let manifestFile = JSON.parse(manifestFileRaw)
+
+
+            // Extract and Build File Data
+            let masterList = manifestFile.files;
+            let payload = masterList.map(obj => obj.projectID);
+
+            let bulkMods = await getCfData('mods', { modIds: payload, filterPcOnly: true }, 'post');
+
+
+            let foundMods = [];
+            let missingMods = []
+
+            for (let item of masterList) {
+                let itemMetadata = bulkMods.data.find(obj => obj.id === item.projectID);
+                if (itemMetadata) {
+                    // Found Item now Check for LatestFiles and extract info.
+                    let foundFile = itemMetadata.latestFiles.find(obj => obj.id === item.fileID);
+                    if (foundFile) {
+                        // Build metadata item
+                        let metItem = {
+                            name: itemMetadata.name,
+                            filename: foundFile.fileName,
+                            slug: itemMetadata.slug,
+                            side: 'both',
+                            download: {
+                                'hash-format': 'sha1',
+                                hash: foundFile.hashes[0].value,
+                                mode: 'metadata:curseforge'
+                            },
+                            class: itemMetadata.classId,
+                            fileId: item.fileID,
+                            projectId: item.projectID
+                        }
+                        foundMods.push(metItem)
+                    } else {
+                        item['name'] = itemMetadata.name;
+                        item['class'] = itemMetadata.classId;
+                        item['slug'] = itemMetadata.slug;
+                        missingMods.push(item);
+                    }
+                }
+            }
+
+            // Attempt Two Search Via FileIds
+
+            let masterMissingList = missingMods;
+
+            payload = masterMissingList.map(obj => obj.fileID);
+            let bulkMissingMods = await getCfData('mods/files', { fileIds: payload }, 'post');
+
+
+            let secondPassFound = [];
+            let secondPassMissing = [];
+
+            for (let item of masterMissingList) {
+                let foundFile = bulkMissingMods.data.find(obj => obj.id === item.fileID);
+                if (foundFile) {
+                    let metItem = {
+                        name: item.name,
+                        slug: item.slug,
+                        filename: foundFile.fileName,
+                        side: 'both',
+                        download: {
+                            'hash-format': 'sha1',
+                            hash: foundFile.hashes[0].value,
+                            mode: 'metadata:curseforge'
+                        },
+                        class: item.class,
+                        fileId: item.fileID,
+                        projectId: item.projectID
+                    }
+                    secondPassFound.push(metItem);
+                } else {
+                    secondPassMissing.push(item);
+                }
+            }
+
+
+
+            // Log Any Remining Missing Files;
+            for (let missing of secondPassMissing) {
+                console.log(`Was Not able to find mod ${missing.name} (${missing.projectID})`);
+            };
+
+            // Merge Mods Into One Obj
+            let allMods = [...foundMods, ...secondPassFound];
+
+
+
+
+
+            // Create Modpack
+            const MODPACK_PATH = path.join(outPath, name_over)
+            fs.mkdirSync(MODPACK_PATH, { recursive: true });
+
+            // Create Object for tracking index
+            let indexTracker = [];
+
+            // Handle and Transfer overrides
+            const SKIP_PATTERNS = [/\.hprof$/i, /\.log$/i, /^logs\//i, /^crash-reports\//i];
+            const MAX_OVERRIDE_SIZE = 100 * 1024 * 1024; // 100MB — adjust as needed
+
+            let overrideFiles = zipFiles
+                .filter(f => f.startsWith('overrides/') && !zip.files[f].dir)
+                .map(f => f.replace(/^overrides\//, ''))
+                .filter(f => {
+                    if (SKIP_PATTERNS.some(re => re.test(f))) {
+                        return false;
+                    }
+                    const entry = zip.files[`overrides/${f}`];
+                    const size = entry._data ? entry._data.uncompressedSize : 0;
+                    if (size > MAX_OVERRIDE_SIZE) {
+                        return false;
+                    }
+                    return true;
+                });
+
+            for (let file of overrideFiles) {
+                const entry = zip.files[`overrides/${file}`];
+                let filePath = path.join(MODPACK_PATH, file.split("/").slice(0, -1).join("/"));
+                let fileName = file.split("/")[file.split("/").length - 1];
+
+                fs.mkdirSync(filePath, { recursive: true });
+
+                try {
+                    const content = await entry.async('nodebuffer');
+                    let finalDest = path.join(filePath, fileName)
+                    let innerDest = path.join(file.split("/").slice(0, -1).join("/"), fileName)
+                    fs.writeFileSync(finalDest, content);
+                    const hash = crypto.createHash("sha256").update(content).digest("hex");
+                    let newIndexItem = {
+                        file: innerDest,
+                        hash
+                    };
+                    indexTracker.push(newIndexItem);
+
+
+                } catch (err) {
+                    console.error(`Skipping bad entry overrides/${file}: ${err.message}`);
+                }
+            }
+
+            // Split and Create Mod Files
+
+            let actualMods = allMods.filter(obj => obj.class === 6);
+            let shaders = allMods.filter(obj => obj.class === 6552);
+
+            // Handle Shaders
+            for (let shader of shaders) {
+                const jsonContent = JSON.stringify(shader, null, 2);
+                const filePath = path.join(MODPACK_PATH, `${shader.slug}-cmm.json`);
+
+                fs.writeFileSync(filePath, jsonContent);
+
+                const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+                let newIndexItem = {
+                    file: `${shader.slug}-cmm.json`,
+                    metafile: true,
+                    hash
+                };
+                indexTracker.push(newIndexItem);
+   
+            }
+
+            fs.mkdirSync(path.join(MODPACK_PATH, 'mods'), { recursive: true })
+
+            for (let mod of actualMods) {
+                const jsonContent = JSON.stringify(mod, null, 2);
+                const filePath = path.join(MODPACK_PATH, 'mods', `${mod.slug}-cmm.json`);
+
+                fs.writeFileSync(filePath, jsonContent);
+
+                const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+                let newIndexItem = {
+                    file: `mods/${mod.slug}-cmm.json`,
+                    metafile: true,
+                    hash
+                };
+                indexTracker.push(newIndexItem);
+            
+            };
+
+            // Write index file
+            const jsonContent = JSON.stringify(indexTracker, null, 2);
+            const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+            fs.writeFileSync(path.join(MODPACK_PATH, 'index.json'), jsonContent);
+
+            let pack = {
+                name: manifestFile.name,
+                author: manifestFile.author,
+                'pack-format': 'cmm-1.0.0',
+                index: {
+                    file: 'index.json',
+                    'hash-format': 'sha256',
+                    hash
+                },
+                versions: {
+                    minecraft: manifestFile.minecraft.version,
+                    loader: manifestFile.minecraft.modLoaders[0].id
+                }
+            };
+
+            fs.writeFileSync(path.join(MODPACK_PATH, 'pack.json'), JSON.stringify(pack, null, 2));
+
 
             const packInfo = await getPackInfo(path.join(outPath, name_over));
-            resolve(packInfo);
+            resolve(packInfo)
         } catch (err) {
             reject(err);
         }
@@ -154,7 +365,7 @@ async function importFromCurseforge(zipPath, outPath, packwizLoc, nameOverride) 
 async function getPackInfo(dir) {
     return new Promise((resolve, reject) => {
         try {
-            const packFile = parse(fs.readFileSync(path.join(dir, "pack.toml")).toString());
+            const packFile = JSON.parse(fs.readFileSync(path.join(dir, "pack.json")).toString());
             resolve(packFile);
         } catch (err) {
             reject(err);

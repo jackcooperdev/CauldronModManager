@@ -4,7 +4,7 @@
   "type": "commonjs",
   "description": "Packwiz Assistant for NodeJS (Used in Cauldron)",
   "main": "src/index.js",
-   "repository": {
+  "repository": {
     "type": "git",
     "url": "https://github.com/jackcooperdev/packwiz_js.git"
   },
@@ -17,6 +17,8 @@
   "author": "JackCooper",
   "license": "GPL-3.0-only",
   "dependencies": {
+    "axios": "^1.20.0",
+    "jszip": "^3.10.2",
     "node-stream-zip": "^1.15.0",
     "smol-toml": "^1.7.0"
   }
