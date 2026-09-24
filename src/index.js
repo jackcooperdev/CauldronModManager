@@ -6,8 +6,11 @@ const { exec } = require("node:child_process"); // Node.js v16+ allows "node:" p
 const { parse } = require("smol-toml");
 const StreamZip = require("node-stream-zip");
 const JSZip = require("jszip");
+const { rimraf } = require('rimraf')
 const { getCfData } = require("./libs/cfCommunication");
-const crypto = require("crypto")
+const crypto = require("crypto");
+
+const { validate, bulkValidate } = require("./libs/fileValidator");
 // Native helper to replace shell.which
 function which(cmd) {
     return new Promise((resolve) => {
@@ -131,9 +134,28 @@ async function importFromCurseforge(zipPath, outPath, nameOverride) {
             }
 
             const name_over = nameOverride || path.parse(zipPath).name;
-            fs.mkdirSync(path.join(outPath, name_over), { recursive: true });
+            const MODPACK_PATH = path.join(outPath, name_over)
 
             const zipBuffer = await fs.readFileSync(zipPath);
+            const zipHash = crypto.createHash("sha256").update(zipBuffer).digest("hex");
+
+            // Check If pack has been previously imported
+            if (fs.existsSync(MODPACK_PATH)) {
+                let packInfo = await getPackInfo(MODPACK_PATH)
+                if (packInfo.sourceHash === zipHash) {
+                    console.log(`Pack has already been imported (${zipHash})`);
+                    let validatePack = await verifyModpackIntegrity(MODPACK_PATH);
+                    if (validatePack.passed) {
+                        return resolve(packInfo)
+                    } else {
+                        rimraf(MODPACK_PATH)
+                    }
+
+                } else {
+                    rimraf(MODPACK_PATH)
+                }
+            };
+
             // Grab Modpack Info
             const zip = await JSZip.loadAsync(zipBuffer);
 
@@ -241,7 +263,6 @@ async function importFromCurseforge(zipPath, outPath, nameOverride) {
 
 
             // Create Modpack
-            const MODPACK_PATH = path.join(outPath, name_over)
             fs.mkdirSync(MODPACK_PATH, { recursive: true });
 
             // Create Object for tracking index
@@ -310,7 +331,7 @@ async function importFromCurseforge(zipPath, outPath, nameOverride) {
                     hash
                 };
                 indexTracker.push(newIndexItem);
-   
+
             }
 
             fs.mkdirSync(path.join(MODPACK_PATH, 'mods'), { recursive: true })
@@ -328,7 +349,7 @@ async function importFromCurseforge(zipPath, outPath, nameOverride) {
                     hash
                 };
                 indexTracker.push(newIndexItem);
-            
+
             };
 
             // Write index file
@@ -345,6 +366,7 @@ async function importFromCurseforge(zipPath, outPath, nameOverride) {
                     'hash-format': 'sha256',
                     hash
                 },
+                sourceHash: zipHash,
                 versions: {
                     minecraft: manifestFile.minecraft.version,
                     loader: manifestFile.minecraft.modLoaders[0].id
@@ -368,9 +390,64 @@ async function getPackInfo(dir) {
             const packFile = JSON.parse(fs.readFileSync(path.join(dir, "pack.json")).toString());
             resolve(packFile);
         } catch (err) {
-            reject(err);
+            resolve(false);
         }
     });
+}
+
+async function getPackIndex(dir) {
+    return new Promise((resolve, reject) => {
+        try {
+            const packFile = JSON.parse(fs.readFileSync(path.join(dir, "index.json")).toString());
+            resolve(packFile);
+        } catch (err) {
+            resolve(false);
+        }
+    });
+}
+
+async function verifyModpackIntegrity(mPackPath) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            let startTime = Date.now();
+
+            let mPackContents = fs.readdirSync(mPackPath);
+            let requiredFiles = ['index.json', 'pack.json'];
+            for (let req of requiredFiles) {
+                if (!mPackContents.includes(req)) {
+                    resolve(false)
+                }
+            }
+
+            // Get pack.json
+            let packInfo = await getPackInfo(mPackPath);
+
+            // Validate Index.json
+            let validIndex = await validate({ file: path.join(mPackPath, 'index.json'), hash: packInfo.index.hash });
+
+
+            if (!validIndex) {
+                resolve({ passed: false, failed: [{ file: 'index.json', hash: packInfo.index.hash }] })
+            }
+
+            // Get Index
+
+            let index = await getPackIndex(mPackPath);
+
+            let validateIndex = await bulkValidate(index, mPackPath);
+            if (validateIndex.length !== 0) {
+                resolve({ passed: false, failed: validateIndex })
+            }
+            let endTime = Date.now()
+            resolve({ passed: true, failed: [], took: `${endTime - startTime}ms` })
+
+
+
+        } catch (e) {
+            reject(e)
+        }
+
+    })
 }
 
 async function getPackVersion(name, dir) {
@@ -455,4 +532,5 @@ module.exports = {
     getModList,
     createPack,
     importFromModrinth,
+    verifyModpackIntegrity
 };
