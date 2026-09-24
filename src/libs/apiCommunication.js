@@ -1,6 +1,7 @@
 const axios = require('axios')
 const CF_SOURCE = "https://cf.polymc.org/api";
 const CF_API = "https://api.curseforge.com/v1/"
+const MR_API = "https://api.modrinth.com/v2/"
 
 let CF_KEY = undefined;
 
@@ -38,9 +39,23 @@ async function getCfData(url, payload, method = 'get') {
     }
 }
 
-async function getBulkMods(payload) {
-    let test =
-    console.log(test)
+async function getMrData(url, payload, method = 'get') {
+    let config = {
+        method,
+        url: `${MR_API}${url}`,
+        data: payload,
+        headers: {
+            'Content-Type': 'application/json'
+        },
+    };
+    try {
+        let response = await axios(config);
+        return response.data;
+    } catch (e) {
+        //console.log(e)
+        return false;
+    }
 }
 
-module.exports = {getCfData}
+
+module.exports = {getCfData, getMrData}

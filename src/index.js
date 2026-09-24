@@ -7,7 +7,7 @@ const { parse } = require("smol-toml");
 const StreamZip = require("node-stream-zip");
 const JSZip = require("jszip");
 const { rimraf } = require('rimraf')
-const { getCfData } = require("./libs/cfCommunication");
+const { getCfData, getMrData } = require("./libs/apiCommunication");
 const crypto = require("crypto");
 
 const { validate, bulkValidate } = require("./libs/fileValidator");
@@ -32,19 +32,22 @@ function getFileNamesFromToml(dir) {
     });
 }
 
+function convertModrinthURLtoIDS(obj) {
+    const url = obj.downloads[0];
+    const match = url.match(/\/data\/([^/]+)\/versions\/([^/]+)\//);
+
+    if (match) {
+        obj.projectId = match[1]; // "3xf3eGxN"
+        obj.fileId = match[2]; // "PeYaLZ5O"
+    }
+
+    return obj;
+}
+
 // Import From Modrinth (.mrpack)
-async function importFromModrinth(mrPath, outPath, packwizLoc, nameOverride) {
+async function importFromModrinth(mrPath, outPath, nameOverride) {
     return new Promise(async (resolve, reject) => {
         try {
-            if (!packwizLoc) {
-                packwizLoc = await which("packwiz");
-                if (!packwizLoc) {
-                    reject("No Packwiz exe found! Please Add to Path or declare manually...");
-                    return;
-                }
-            }
-            packwizLoc = path.resolve(packwizLoc.toString());
-
             if (!fs.existsSync(mrPath)) {
                 reject("FILE_NOT_EXIST");
                 return;
@@ -55,64 +58,186 @@ async function importFromModrinth(mrPath, outPath, packwizLoc, nameOverride) {
                 return;
             }
 
-            const zip = new StreamZip.async({ file: mrPath });
-            const manifestRaw = await zip.entryData("modrinth.index.json");
-            const manifest = JSON.parse(manifestRaw);
-            const name_over = nameOverride || manifest.name;
+            const name_over = nameOverride || path.parse(mrPath).name;
+            const MODPACK_PATH = path.join(outPath, name_over)
+            const zipBuffer = await fs.readFileSync(mrPath);
+            const zipHash = crypto.createHash("sha256").update(zipBuffer).digest("hex");
 
-            fs.mkdirSync(path.join(outPath, name_over), { recursive: true });
-
-            const projectDeps = manifest.dependencies;
-            const depKeys = Object.keys(projectDeps);
-            let loader = "", loaderVersion = "", mcVersion = "";
-
-            for (let key of depKeys) {
-                if (key === "minecraft") {
-                    mcVersion = projectDeps[key];
-                } else {
-                    if (key.includes('loader')) {
-                        let temp = key.split("-");
-                        loader = temp[0]
+            // Check If pack has been previously imported
+            if (fs.existsSync(MODPACK_PATH)) {
+                let packInfo = await getPackInfo(MODPACK_PATH)
+                if (packInfo.sourceHash === zipHash) {
+                    console.log(`Pack has already been imported (${zipHash})`);
+                    let validatePack = await verifyModpackIntegrity(MODPACK_PATH);
+                    if (validatePack.passed) {
+                        return resolve(packInfo)
                     } else {
-                        loader = key;
+                        rimraf(MODPACK_PATH)
                     }
-                    loaderVersion = projectDeps[key];
-                }
-            }
 
-            const newPackInfo = {
-                author: "John Doe",
-                loader,
-                loaderVersion,
-                minecraftVersion: mcVersion,
-                name: name_over,
-                version: 1,
+                } else {
+                    rimraf(MODPACK_PATH)
+                }
             };
-            let currentMods = [];
-            if (fs.existsSync(path.join(outPath, name_over, 'mods'))) {
-                currentMods = await getFileNamesFromToml(path.join(outPath, name_over, 'mods'))
-            }
-            await createPack(newPackInfo, path.join(outPath), packwizLoc);
 
-            fs.mkdirSync(path.join(outPath, name_over, "overrides"), { recursive: true });
-            await zip.extract("overrides", path.join(outPath, name_over, "overrides"));
+            const zip = await JSZip.loadAsync(zipBuffer);
 
-            await runPackwiz(packwizLoc, "refresh", path.join(outPath, name_over));
 
-            for (let file of manifest.files) {
-                let temp = file.path.replace('mods/', '');
-                let modExists = false;
-                if (currentMods.includes(temp)) {
-                    modExists = true;
+            let zipFiles = Object.keys(zip.files);
+
+
+
+            if (!zipFiles.includes('modrinth.index.json')) {
+                reject("NOT_VALID_ZIP")
+                return;
+            };
+
+            // Get Manifest File
+            let manifestFileRaw = await zip.files['modrinth.index.json'].async('string');
+            let manifestFile = JSON.parse(manifestFileRaw)
+
+            // Extract and Build File Data
+
+            let masterList = manifestFile.files;
+
+            // Extract Project and File IDS from download URL
+            masterList = masterList.map(convertModrinthURLtoIDS);
+
+            let payload = masterList.map(obj => obj.projectId)
+
+            let bulkMods = await getMrData(`projects?ids=${JSON.stringify(payload)}`)
+
+            let foundMods = [];
+            let missingMods = [];
+
+            for (item of masterList) {
+                let itemMetadata = bulkMods.find(obj => obj.id === item.projectId);
+                let foundFile = itemMetadata.versions.find(obj => obj === item.fileId);
+
+                if (foundFile) {
+                    let metItem = {
+                        name: itemMetadata.title,
+                        filename: item.path.split("/")[1],
+                        slug: itemMetadata.slug,
+                        side: 'both',
+                        download: {
+                            'hash-format': 'sha1',
+                            hash: item.hashes['sha1'],
+                            mode: 'metadata:modrinth'
+                        },
+                        class: item.path.split("/")[0],
+                        fileId: item.fileId,
+                        projectId: item.projectId
+                    };
+                    foundMods.push(metItem);
+                } else {
+                    missingMods.push(item)
                 }
-                if (!modExists) {
-                    await runPackwiz(packwizLoc, `mr add ${file.downloads[0]} --yes`, path.join(outPath, name_over));
-                }
 
             }
+
+
+            // Log Any Remining Missing Files;
+            for (let missing of missingMods) {
+                console.log(`Was Not able to find mod ${missing.name} (${missing.projectId})`);
+            };
+
+            fs.mkdirSync(MODPACK_PATH, { recursive: true })
+
+
+            let indexTracker = [];
+
+            // Handle and Transfer overrides
+            const SKIP_PATTERNS = [/\.hprof$/i, /\.log$/i, /^logs\//i, /^crash-reports\//i];
+            const MAX_OVERRIDE_SIZE = 100 * 1024 * 1024; // 100MB — adjust as needed
+
+            let overrideFiles = zipFiles
+                .filter(f => f.startsWith('overrides/') && !zip.files[f].dir)
+                .map(f => f.replace(/^overrides\//, ''))
+                .filter(f => {
+                    if (SKIP_PATTERNS.some(re => re.test(f))) {
+                        return false;
+                    }
+                    const entry = zip.files[`overrides/${f}`];
+                    const size = entry._data ? entry._data.uncompressedSize : 0;
+                    if (size > MAX_OVERRIDE_SIZE) {
+                        return false;
+                    }
+                    return true;
+                });
+
+            for (let file of overrideFiles) {
+                const entry = zip.files[`overrides/${file}`];
+                let filePath = path.join(MODPACK_PATH, file.split("/").slice(0, -1).join("/"));
+                let fileName = file.split("/")[file.split("/").length - 1];
+
+                fs.mkdirSync(filePath, { recursive: true });
+
+                try {
+                    const content = await entry.async('nodebuffer');
+                    let finalDest = path.join(filePath, fileName)
+                    let innerDest = path.join(file.split("/").slice(0, -1).join("/"), fileName)
+                    fs.writeFileSync(finalDest, content);
+                    const hash = crypto.createHash("sha256").update(content).digest("hex");
+                    let newIndexItem = {
+                        file: innerDest,
+                        hash
+                    };
+                    indexTracker.push(newIndexItem);
+
+
+                } catch (err) {
+                    console.error(`Skipping bad entry overrides/${file}: ${err.message}`);
+                }
+            }
+
+
+
+            // Split and Create Mod Files
+
+            for (let mod of foundMods) {
+                fs.mkdirSync(path.join(MODPACK_PATH, mod.class), { recursive: true })
+                const jsonContent = JSON.stringify(mod, null, 2);
+                const filePath = path.join(MODPACK_PATH, mod.class, `${mod.slug}-cmm.json`);
+
+                fs.writeFileSync(filePath, jsonContent);
+
+                const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+                let newIndexItem = {
+                    file: `${mod.class}/${mod.slug}-cmm.json`,
+                    metafile: true,
+                    hash
+                };
+                indexTracker.push(newIndexItem);
+
+            };
+
+
+            // Write index file
+            const jsonContent = JSON.stringify(indexTracker, null, 2);
+            const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+            fs.writeFileSync(path.join(MODPACK_PATH, 'index.json'), jsonContent);
+            let depObjs = Object.keys(manifestFile.dependencies)
+            let pack = {
+                name: manifestFile.name,
+                author: 'A Modrinth User',
+                'pack-format': 'cmm-1.0.0',
+                index: {
+                    file: 'index.json',
+                    'hash-format': 'sha256',
+                    hash
+                },
+                sourceHash: zipHash,
+                versions: {
+                    minecraft: manifestFile.dependencies[depObjs[0]],
+                    loader: `${depObjs[1]}-${manifestFile.dependencies[depObjs[1]]}`
+                }
+            };
+
+            fs.writeFileSync(path.join(MODPACK_PATH, 'pack.json'), JSON.stringify(pack, null, 2));
 
             const packInfo = await getPackInfo(path.join(outPath, name_over));
-            resolve(packInfo);
+            resolve(packInfo)
         } catch (e) {
             reject(e);
         }
@@ -366,7 +491,7 @@ async function importFromCurseforge(zipPath, outPath, nameOverride) {
                     'hash-format': 'sha256',
                     hash
                 },
-                sourceHash: zipHash,
+                sourceHash: 'zipHash',
                 versions: {
                     minecraft: manifestFile.minecraft.version,
                     loader: manifestFile.minecraft.modLoaders[0].id
