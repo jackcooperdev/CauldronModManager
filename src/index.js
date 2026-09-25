@@ -6,8 +6,8 @@ const { exec } = require("node:child_process"); // Node.js v16+ allows "node:" p
 const { parse } = require("smol-toml");
 const StreamZip = require("node-stream-zip");
 const JSZip = require("jszip");
-const { rimraf } = require('rimraf')
-const { getCfData, getMrData } = require("./libs/apiCommunication");
+const { rimraf, rimrafSync } = require('rimraf')
+const { getCfData, getMrData, getCData } = require("./libs/apiCommunication");
 const crypto = require("crypto");
 
 const { validate, bulkValidate } = require("./libs/fileValidator");
@@ -577,7 +577,7 @@ async function verifyModpackIntegrity(mPackPath) {
 
 async function getPackVersion(name, dir) {
     try {
-        const packFile = parse(fs.readFileSync(path.join(dir, name, "pack.toml")).toString());
+        const packFile = JSON.parse(fs.readFileSync(path.join(dir, "pack.json")).toString());
         return packFile.version;
     } catch (err) {
         return false;
@@ -587,6 +587,7 @@ async function getPackVersion(name, dir) {
 async function createPack(fileData, dir, packwizLoc) {
     return new Promise(async (resolve, reject) => {
         if (!packwizLoc) {
+            console.log(packwizLoc)
             packwizLoc = await which("packwiz");
             if (!packwizLoc) {
                 reject("No Packwiz exe found! Please Add to Path or declare manually");
@@ -595,26 +596,99 @@ async function createPack(fileData, dir, packwizLoc) {
         }
 
         const packPath = path.join(dir, fileData.name);
+
+        // Temp
+        if (fs.existsSync(packPath)) {
+            rimrafSync(packPath);
+        };
+
         fs.mkdirSync(packPath, { recursive: true });
-        packwizLoc = path.resolve(packwizLoc.toString());
 
-        const loaderVer = fileData.loaderVersion
-            ? `--${fileData.loader}-version ${fileData.loaderVersion}`
-            : `--${fileData.loader}-latest`;
+        // Create Index
+        let index = [];
+        const jsonContent = JSON.stringify(index, null, 2);
+        const indexHash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+        fs.writeFileSync(path.join(packPath, 'index.json'), jsonContent)
 
-        const command = `init -r --author ${fileData.author.replace(/\s/g, "")} ${loaderVer} --mc-version ${fileData.minecraftVersion} --modloader ${fileData.loader} --name ${fileData.name.replace(/\s/g, "")} --version ${fileData.version}`;
-        await runPackwiz(packwizLoc, command, packPath, true);
+        // Get Loader Version
+        let curLoadVersion = fileData.loaderVersion;
 
-        if (fileData.mods) {
-            for (let mod of fileData.mods) {
-                const modCmd = `${mod.source} add ${mod.slug} --yes`;
-                await runPackwiz(packwizLoc, modCmd, packPath, true);
-            }
+        if (!curLoadVersion || curLoadVersion.includes(['default', 'latest', 'release'])) {
+            let resData = await getCData(`loaders/${fileData.loader}/version_manifest.json`);
+            let verManifest = resData.versions.find(obj => obj.id === fileData.minecraftVersion);
+
+            if (!verManifest) {
+                return reject('version not valid');
+            };
+            curLoadVersion = verManifest.loaderVersion;
+
         }
 
-        resolve(true);
+
+        // Create Pack
+
+        let pack = {
+            name: fileData.name,
+            author: fileData.author,
+            'pack-format': 'cmm-1.0.0',
+            index: {
+                file: 'index.json',
+                'hash-format': 'sha256',
+                indexHash
+            },
+            versions: {
+                minecraft: fileData.minecraftVersion,
+                loader: `${fileData.loader}-${curLoadVersion}`
+            }
+        };
+
+
+        fs.writeFileSync(path.join(packPath, 'pack.json'), JSON.stringify(pack, null, 2));
+
+
+        await addMods(fileData.mods,packPath)
+        /*  packwizLoc = path.resolve(packwizLoc.toString());
+ 
+         const loaderVer = fileData.loaderVersion
+             ? `--${fileData.loader}-version ${fileData.loaderVersion}`
+             : `--${fileData.loader}-latest`;
+ 
+         const command = `init -r --author ${fileData.author.replace(/\s/g, "")} ${loaderVer} --mc-version ${fileData.minecraftVersion} --modloader ${fileData.loader} --name ${fileData.name.replace(/\s/g, "")} --version ${fileData.version}`;
+         await runPackwiz(packwizLoc, command, packPath, true);
+ 
+         if (fileData.mods) {
+             for (let mod of fileData.mods) {
+                 const modCmd = `${mod.source} add ${mod.slug} --yes`;
+                 await runPackwiz(packwizLoc, modCmd, packPath, true);
+             }
+         }
+ 
+         resolve(true); */
     });
 }
+
+async function addMods(modList, packPath) {
+    return new Promise((resolve) => {
+
+        // Create Mods Folder
+        fs.mkdirSync(path.join(packPath,'mods'),{recursive:true});
+
+        // Get Current Index
+        let indexTracker = JSON.parse(fs.readFileSync(path.join(packPath,'index.json')).toString());
+
+        let cfMods = modList.filter(obj => obj.source === 'cf')
+        let mrMods = modList.filter(obj => obj.source === 'mr');
+
+        let allMods = [];
+        
+        for (let mod of cfMods) {
+            
+        }
+
+
+    })
+}
+
 
 async function getModList(packFolder) {
     return new Promise((resolve) => {

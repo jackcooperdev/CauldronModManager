@@ -2,6 +2,7 @@ const axios = require('axios')
 const CF_SOURCE = "https://cf.polymc.org/api";
 const CF_API = "https://api.curseforge.com/v1/"
 const MR_API = "https://api.modrinth.com/v2/"
+const C_RES_API = "http://solvershost.tail80e443.ts.net:3300/"
 
 let CF_KEY = undefined;
 
@@ -57,5 +58,23 @@ async function getMrData(url, payload, method = 'get') {
     }
 }
 
+async function getCData(url, payload, method = 'get') {
+    let config = {
+        method,
+        url: `${C_RES_API}${url}`,
+        data: payload,
+        headers: {
+            'Content-Type': 'application/json'
+        },
+    };
+    try {
+        let response = await axios(config);
+        return response.data;
+    } catch (e) {
+        //console.log(e)
+        return false;
+    }
+}
 
-module.exports = {getCfData, getMrData}
+
+module.exports = {getCfData, getMrData, getCData}
