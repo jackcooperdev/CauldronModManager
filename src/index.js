@@ -645,8 +645,12 @@ async function createPack(fileData, dir, packwizLoc) {
 
         fs.writeFileSync(path.join(packPath, 'pack.json'), JSON.stringify(pack, null, 2));
 
+        try {
+            await addMods(fileData, packPath)
+        } catch (e) {
+            reject(e)
+        }
 
-        await addMods(fileData.mods,packPath)
         /*  packwizLoc = path.resolve(packwizLoc.toString());
  
          const loaderVer = fileData.loaderVersion
@@ -667,24 +671,93 @@ async function createPack(fileData, dir, packwizLoc) {
     });
 }
 
-async function addMods(modList, packPath) {
-    return new Promise((resolve) => {
+let loaderMap = {
+    'forge': 1,
+    'fabric': 4,
+    'neoforge': 6
+}
 
+async function addMods(packData, packPath) {
+    return new Promise(async (resolve, reject) => {
+        let modList = packData.mods;
         // Create Mods Folder
-        fs.mkdirSync(path.join(packPath,'mods'),{recursive:true});
+        fs.mkdirSync(path.join(packPath, 'mods'), { recursive: true });
 
         // Get Current Index
-        let indexTracker = JSON.parse(fs.readFileSync(path.join(packPath,'index.json')).toString());
+        let indexTracker = JSON.parse(fs.readFileSync(path.join(packPath, 'index.json')).toString());
 
         let cfMods = modList.filter(obj => obj.source === 'cf')
         let mrMods = modList.filter(obj => obj.source === 'mr');
 
         let allMods = [];
-        
+
         for (let mod of cfMods) {
-            
+            let grabData = await getCfData(`mods/search?gameId=432&slug=${mod.slug}&classId=6`);
+            let modData = grabData.data[0];
+            if (modData) {
+                let latestFiles = modData.latestFilesIndexes;
+                let foundModForVersion = latestFiles.find(obj => obj.gameVersion === packData.minecraftVersion && obj.modLoader === loaderMap[packData.loader])
+
+                if (!foundModForVersion) {
+
+                    let indexKeys = Object.keys(latestFiles[0]);
+
+                    // Edge Case: Mod Does not include a loader but is a dependa so it can be assumed that the mod is compatible with the current mod.
+                    if (!indexKeys.includes('modLoader') && mod.isDependa) {
+                        foundModForVersion = latestFiles.find(obj => obj.gameVersion === packData.minecraftVersion);
+                    } else {
+                        return reject('mod not found ' + mod.slug)
+                    }
+                };
+                let modDataExistsinLatest = modData.latestFiles.find(obj => obj.id === foundModForVersion.fileId);
+                let modInfo = modDataExistsinLatest
+                if (!modInfo) {
+                    let fileData = await getCfData(`mods/${modData.id}/files/${foundModForVersion.fileId}`);
+                    if (!fileData.data) {
+                        return reject('mod file not found')
+                    };
+                    modInfo = fileData.data
+                };
+
+                // TODO Dependency Search
+                let respondToDeps = [3];
+                let grabDependencys = modInfo.dependencies.filter(obj => respondToDeps.includes(obj.relationType)).map(obj => obj.modId);
+                if (grabDependencys.length !== 0) {
+
+                    let toAdd = await getCfData('mods', { modIds: grabDependencys, filterPcOnly: true }, 'post');
+                    for (let mod of toAdd.data) {
+                        let newQItem = {
+                            source: 'cf',
+                            slug: mod.slug,
+                            isDependa: true
+                        };
+                        cfMods.push(newQItem)
+                    }
+                }
+
+
+                let metItem = {
+                    name: modData.name,
+                    slug: modData.slug,
+                    filename: modInfo.fileName,
+                    side: 'both',
+                    download: {
+                        'hash-format': 'sha1',
+                        hash: modInfo.hashes[0].value,
+                        mode: 'metadata:curseforge'
+                    },
+                    class: modData.classId,
+                    fileId: modInfo.id,
+                    projectId: modData.id
+                }
+                allMods.push(metItem);
+            } else {
+                console.log(`Slug ${mod.slug} is not a valid slug`)
+            }
         }
 
+        
+        console.log(allMods)
 
     })
 }

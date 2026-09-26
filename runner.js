@@ -13,13 +13,19 @@ async function run() {
       mods: [{
          source: 'cf',
          slug: 'journeymap'
-      }, {
+      },
+      {
          source: 'mr',
          slug: 'biomes-o-plenty'
       }]
    }
-   let out = await createPack(payload, "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks", "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\config\\packwiz\\packwiz.exe")
-   console.log(out)
+   try {
+      let out = await createPack(payload, "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks", "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\config\\packwiz\\packwiz.exe")
+      console.log(out)
+   } catch (e) {
+      console.log(e)
+   }
+
 }
 
 run()

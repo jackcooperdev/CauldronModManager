@@ -1,6 +1,6 @@
 {
-  "name": "@jackcooperdev/packwiz_js",
-  "version": "1.1.0",
+  "name": "@jackcooperdev/cmm",
+  "version": "0.1.0",
   "type": "commonjs",
   "description": "Packwiz Assistant for NodeJS (Used in Cauldron)",
   "main": "src/index.js",
