@@ -9,6 +9,8 @@ const JSZip = require("jszip");
 const { rimraf, rimrafSync } = require('rimraf')
 const { getCfData, getMrData, getCData } = require("./libs/apiCommunication");
 const crypto = require("crypto");
+const CF_CLASSES = require('./data/cfClasses.json')
+const MR_CLASSES = require('./data/mrClasses.json')
 
 const { validate, bulkValidate } = require("./libs/fileValidator");
 // Native helper to replace shell.which
@@ -230,7 +232,10 @@ async function importFromModrinth(mrPath, outPath, nameOverride) {
                 sourceHash: zipHash,
                 versions: {
                     minecraft: manifestFile.dependencies[depObjs[0]],
-                    loader: `${depObjs[1]}-${manifestFile.dependencies[depObjs[1]]}`
+                    loader: {
+                        type: depObjs[1],
+                        version: manifestFile.dependencies[depObjs[1]]
+                    }
                 }
             };
 
@@ -442,40 +447,63 @@ async function importFromCurseforge(zipPath, outPath, nameOverride) {
             let actualMods = allMods.filter(obj => obj.class === 6);
             let shaders = allMods.filter(obj => obj.class === 6552);
 
-            // Handle Shaders
-            for (let shader of shaders) {
-                const jsonContent = JSON.stringify(shader, null, 2);
-                const filePath = path.join(MODPACK_PATH, `${shader.slug}-cmm.json`);
+            for (let mod of allMods) {
+                let actualClass = mod.class
+                if (Number(actualClass)) {
+                    let classInfo = CF_CLASSES.find(obj => obj.id === actualClass);
+                    actualClass = classInfo.name.toLowerCase();
+                } else {
+                    actualClass = MR_CLASSES[actualClass];
+                }
+                fs.mkdirSync(path.join(MODPACK_PATH, actualClass), { recursive: true })
+                const jsonContent = JSON.stringify(mod, null, 2);
+                const filePath = path.join(MODPACK_PATH, actualClass, `${mod.slug}-cmm.json`);
 
                 fs.writeFileSync(filePath, jsonContent);
 
                 const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
                 let newIndexItem = {
-                    file: `${shader.slug}-cmm.json`,
+                    file: `${actualClass}/${mod.slug}-cmm.json`,
                     metafile: true,
                     hash
                 };
                 indexTracker.push(newIndexItem);
-
             }
 
-            fs.mkdirSync(path.join(MODPACK_PATH, 'mods'), { recursive: true })
-
-            for (let mod of actualMods) {
-                const jsonContent = JSON.stringify(mod, null, 2);
-                const filePath = path.join(MODPACK_PATH, 'mods', `${mod.slug}-cmm.json`);
-
-                fs.writeFileSync(filePath, jsonContent);
-
-                const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
-                let newIndexItem = {
-                    file: `mods/${mod.slug}-cmm.json`,
-                    metafile: true,
-                    hash
-                };
-                indexTracker.push(newIndexItem);
-
-            };
+            // Handle Shaders
+            /*             for (let shader of shaders) {
+                            const jsonContent = JSON.stringify(shader, null, 2);
+                            const filePath = path.join(MODPACK_PATH, `${shader.slug}-cmm.json`);
+            
+                            fs.writeFileSync(filePath, jsonContent);
+            
+                            const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+                            let newIndexItem = {
+                                file: `${shader.slug}-cmm.json`,
+                                metafile: true,
+                                hash
+                            };
+                            indexTracker.push(newIndexItem);
+            
+                        }
+            
+                        fs.mkdirSync(path.join(MODPACK_PATH, 'mods'), { recursive: true })
+            
+                        for (let mod of actualMods) {
+                            const jsonContent = JSON.stringify(mod, null, 2);
+                            const filePath = path.join(MODPACK_PATH, 'mods', `${mod.slug}-cmm.json`);
+            
+                            fs.writeFileSync(filePath, jsonContent);
+            
+                            const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+                            let newIndexItem = {
+                                file: `mods/${mod.slug}-cmm.json`,
+                                metafile: true,
+                                hash
+                            };
+                            indexTracker.push(newIndexItem);
+            
+                        }; */
 
             // Write index file
             const jsonContent = JSON.stringify(indexTracker, null, 2);
@@ -491,10 +519,14 @@ async function importFromCurseforge(zipPath, outPath, nameOverride) {
                     'hash-format': 'sha256',
                     hash
                 },
-                sourceHash: 'zipHash',
+                sourceHash: zipHash,
                 versions: {
                     minecraft: manifestFile.minecraft.version,
-                    loader: manifestFile.minecraft.modLoaders[0].id
+                    loader: {
+                        type: manifestFile.minecraft.modLoaders[0].id.split("-")[0],
+                        version: manifestFile.minecraft.modLoaders[0].id.split("-")[1]
+                    }
+
                 }
             };
 
@@ -634,11 +666,14 @@ async function createPack(fileData, dir, packwizLoc) {
             index: {
                 file: 'index.json',
                 'hash-format': 'sha256',
-                indexHash
+                hash: indexHash
             },
             versions: {
                 minecraft: fileData.minecraftVersion,
-                loader: `${fileData.loader}-${curLoadVersion}`
+                loader: {
+                    type: fileData.loader,
+                    version: curLoadVersion
+                }
             }
         };
 
@@ -646,7 +681,7 @@ async function createPack(fileData, dir, packwizLoc) {
         fs.writeFileSync(path.join(packPath, 'pack.json'), JSON.stringify(pack, null, 2));
 
         try {
-            await addMods(fileData, packPath)
+            await addMods(packPath, fileData.mods)
         } catch (e) {
             reject(e)
         }
@@ -677,14 +712,19 @@ let loaderMap = {
     'neoforge': 6
 }
 
-async function addMods(packData, packPath) {
+async function addMods(packPath,mods) {
     return new Promise(async (resolve, reject) => {
-        let modList = packData.mods;
+        let pack = JSON.parse(fs.readFileSync(path.join(packPath, 'pack.json')).toString());
+        let modList = mods;
         // Create Mods Folder
         fs.mkdirSync(path.join(packPath, 'mods'), { recursive: true });
 
         // Get Current Index
         let indexTracker = JSON.parse(fs.readFileSync(path.join(packPath, 'index.json')).toString());
+
+        // Get Current Pack
+
+
 
         let cfMods = modList.filter(obj => obj.source === 'cf')
         let mrMods = modList.filter(obj => obj.source === 'mr');
@@ -696,7 +736,7 @@ async function addMods(packData, packPath) {
             let modData = grabData.data[0];
             if (modData) {
                 let latestFiles = modData.latestFilesIndexes;
-                let foundModForVersion = latestFiles.find(obj => obj.gameVersion === packData.minecraftVersion && obj.modLoader === loaderMap[packData.loader])
+                let foundModForVersion = latestFiles.find(obj => obj.gameVersion === pack.versions.minecraft && obj.modLoader === loaderMap[pack.versions.loader.type])
 
                 if (!foundModForVersion) {
 
@@ -704,7 +744,7 @@ async function addMods(packData, packPath) {
 
                     // Edge Case: Mod Does not include a loader but is a dependa so it can be assumed that the mod is compatible with the current mod.
                     if (!indexKeys.includes('modLoader') && mod.isDependa) {
-                        foundModForVersion = latestFiles.find(obj => obj.gameVersion === packData.minecraftVersion);
+                        foundModForVersion = latestFiles.find(obj => obj.gameVersion === pack.versions.minecraft);
                     } else {
                         return reject('mod not found ' + mod.slug)
                     }
@@ -719,7 +759,7 @@ async function addMods(packData, packPath) {
                     modInfo = fileData.data
                 };
 
-                // TODO Dependency Search
+                // Dependency Search
                 let respondToDeps = [3];
                 let grabDependencys = modInfo.dependencies.filter(obj => respondToDeps.includes(obj.relationType)).map(obj => obj.modId);
                 if (grabDependencys.length !== 0) {
@@ -756,8 +796,93 @@ async function addMods(packData, packPath) {
             }
         }
 
-        
-        console.log(allMods)
+        for (let mod of mrMods) {
+            let modData = await getMrData(`project/${mod.slug}`);
+
+            if (modData) {
+                let modHasValidVersion = (modData.game_versions.includes(pack.versions.minecraft) && modData.loaders.includes(pack.versions.loader.type));
+
+                if (!modHasValidVersion) {
+                    reject('mod has no valid version for this mc version / loader');
+                };
+
+                let fileData = await getMrData(`project/${mod.slug}/version?loaders=${JSON.stringify([pack.versions.loader.type])}&game_versions=${JSON.stringify([pack.versions.minecraft])}`);
+
+
+                if (fileData.length === 0) {
+                    reject('mod has no valid version for this mc version / loader');
+                };
+
+                let latestValidVersion = fileData[0];
+
+
+                let grabDependencys = latestValidVersion.dependencies.filter(obj => obj.dependency_type === 'required');
+                for (let mod of grabDependencys) {
+                    let newQItem = {
+                        source: 'mr',
+                        slug: mod.project_id,
+                        isDependa: true
+                    };
+                    mrMods.push(newQItem)
+                };
+
+
+
+                let metItem = {
+                    name: modData.title,
+                    slug: modData.slug,
+                    filename: latestValidVersion.files[0].filename,
+                    side: 'both',
+                    download: {
+                        'hash-format': 'sha1',
+                        hash: latestValidVersion.files[0].hashes['sha1'],
+                        mode: 'metadata:modrinth'
+                    },
+                    class: modData.project_type,
+                    fileId: latestValidVersion.id,
+                    projectId: modData.id
+                }
+                allMods.push(metItem)
+
+            } else {
+                console.log(`Slug ${mod.slug} is not a valid slug`)
+            }
+        }
+
+        // Create Mod Files
+
+        for (let mod of allMods) {
+            let actualClass = mod.class
+            if (Number(actualClass)) {
+                let classInfo = CF_CLASSES.find(obj => obj.id === actualClass);
+                actualClass = classInfo.name.toLowerCase();
+            } else {
+                actualClass = MR_CLASSES[actualClass];
+            }
+            fs.mkdirSync(path.join(packPath, actualClass), { recursive: true })
+            const jsonContent = JSON.stringify(mod, null, 2);
+            const filePath = path.join(packPath, actualClass, `${mod.slug}-cmm.json`);
+
+            fs.writeFileSync(filePath, jsonContent);
+
+            const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+            let newIndexItem = {
+                file: `${actualClass}/${mod.slug}-cmm.json`,
+                metafile: true,
+                hash
+            };
+            indexTracker.push(newIndexItem);
+        }
+
+        const jsonContent = JSON.stringify(indexTracker, null, 2);
+        const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+        fs.writeFileSync(path.join(packPath, 'index.json'), jsonContent);
+
+        pack.index.hash = hash;
+        fs.writeFileSync(path.join(packPath, 'pack.json'), JSON.stringify(pack, null, 2));
+
+        resolve(true);
+
 
     })
 }
@@ -803,6 +928,7 @@ module.exports = {
     getPackVersion,
     getModList,
     createPack,
+    addMods,
     importFromModrinth,
     verifyModpackIntegrity
 };
