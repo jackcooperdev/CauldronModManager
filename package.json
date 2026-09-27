@@ -2,7 +2,7 @@
   "name": "@jackcooperdev/cmm",
   "version": "0.1.0",
   "type": "commonjs",
-  "description": "Packwiz Assistant for NodeJS (Used in Cauldron)",
+  "description": "MC Mod Manager for NodeJS (Used in Cauldron)",
   "main": "src/index.js",
   "repository": {
     "type": "git",
@@ -12,7 +12,8 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./pack":"./src/controllers/packManager"
   },
   "author": "JackCooper",
   "license": "GPL-3.0-only",

@@ -1,4 +1,5 @@
 const { importFromCurseforge, verifyModpackIntegrity, importFromModrinth, createPack, addMods } = require("./src");
+const { importFromFolder } = require("./src/controllers/packManager");
 
 async function run() {
 
@@ -17,13 +18,19 @@ async function run() {
       }]
    }
    try {
-      //let out = await importFromCurseforge("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks_cache\\6a4b92de5f2b721766205a1f-endles-49k4wqo5.zip", "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks", "testrunner")
-      //let out = await importFromModrinth("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks_cache\\pixel.mrpack", "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks", "testrunnermodrinth")
+      let out;
+      let run = process.argv[2];
+      if (run === 'cf') {
+         out = await importFromFolder("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks_cache\\test.zip", "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks", "testrunner")
 
-      //let out = await verifyModpackIntegrity("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks\\testrunnermodrinth")
+      } else {
+         out = await importFromFolder("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks_cache\\pixel.mrpack", "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks", "testrunnermodrinth")
+      }
+
+
+      //let out = await verifyModpackIntegrity("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks\\testcustomcmm")
       //let out = await createPack(payload, "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks", "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\config\\packwiz\\packwiz.exe")
-      //let out = await addMods("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks\\testcustomcmm",[{source:'cf',slug:'mekanism'}])
-      
+      //let out = await addMods("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks\\testcustomcmm",[{source:'cf',slug:'mekanism'},{source:'cf',slug:'security-craft'}])
       console.log(out)
    } catch (e) {
       console.log(e)

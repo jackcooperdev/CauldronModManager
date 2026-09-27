@@ -1,5 +1,7 @@
 {
     "mod":"mods",
     "resourcepack":"resourcepacks",
-    "shader":"shaderpacks"
+    "shader":"shaderpacks",
+    "resourcepacks":"resourcepacks",
+    "mods":"mods"
 }
