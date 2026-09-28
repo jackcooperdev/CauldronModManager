@@ -31,7 +31,7 @@ async function run() {
       //let out = await verifyModpackIntegrity("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks\\testcustomcmm")
       //out = await createPack(payload, "C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks")
       //out = await addMods("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks\\testcustomcmm",[{source:'mr',slug:'wawla'}])
-      out = await removeMods("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks\\testcustomcmm",[{source:'cf',slug:'mekanism'},{source:'cf',slug:'security-craft'}])
+      //out = await removeMods("C:\\Users\\sdn\\projects\\cauldron\\.cauldron\\modpacks\\testcustomcmm",[{source:'cf',slug:'mekanism'},{source:'cf',slug:'security-craft'}])
       console.log(out)
    } catch (e) {
       console.log(e)

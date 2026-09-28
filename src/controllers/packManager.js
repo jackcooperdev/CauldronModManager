@@ -30,11 +30,33 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
             return;
         }
 
-        const name_over = nameOverride || path.parse(zipPath).name;
-        const MODPACK_PATH = path.join(outPath, name_over)
 
         const zipBuffer = await fs.readFileSync(zipPath);
         const zipHash = crypto.createHash("sha256").update(zipBuffer).digest("hex");
+
+
+        const zip = await JSZip.loadAsync(zipBuffer);
+
+
+        let zipFiles = Object.keys(zip.files);
+
+        let knownEntryFiles = ['modrinth.index.json', 'manifest.json'];
+
+        const entryFile = zipFiles.filter(item => knownEntryFiles.includes(item))[0];
+        const entryFileInfo = entryFileConversion[entryFile];
+        if (!entryFile) {
+            reject("NOT_VALID_FILE");
+        };
+
+        // Get Manifest File
+        let manifestFileRaw = await zip.files[entryFile].async('string');
+        let manifestFile = JSON.parse(manifestFileRaw);
+
+
+
+        let name_over = nameOverride || manifestFile.name.replace(" ","_")
+        name_over = name_over.toLowerCase();
+        const MODPACK_PATH = path.join(outPath, name_over)
 
 
         if (fs.existsSync(MODPACK_PATH)) {
@@ -53,22 +75,7 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
         }
 
         fs.mkdirSync(MODPACK_PATH, { recursive: true })
-        const zip = await JSZip.loadAsync(zipBuffer);
 
-
-        let zipFiles = Object.keys(zip.files);
-
-        let knownEntryFiles = ['modrinth.index.json', 'manifest.json'];
-
-        const entryFile = zipFiles.filter(item => knownEntryFiles.includes(item))[0];
-        const entryFileInfo = entryFileConversion[entryFile];
-        if (!entryFile) {
-            reject("NOT_VALID_FILE");
-        };
-
-        // Get Manifest File
-        let manifestFileRaw = await zip.files[entryFile].async('string');
-        let manifestFile = JSON.parse(manifestFileRaw);
 
         // Extract and Build File Data
         let masterList = manifestFile.files;
@@ -216,7 +223,7 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
 
 
         let pack = {
-            name: manifestFile.name,
+            name: name_over,
             author: 'A User',
             'pack-format': 'cmm-1.0.0',
             index: {
