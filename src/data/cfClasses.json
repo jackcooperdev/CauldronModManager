@@ -24,7 +24,7 @@
         {
             "id": 12,
             "gameId": 432,
-            "name": "Resource Packs",
+            "name": "ResourcePacks",
             "slug": "resourcepacks",
             "url": "https://www.curseforge.com/minecraft/texture-packs",
             "iconUrl": "https://media.forgecdn.net/avatars/52/102/636111139761599118.png",

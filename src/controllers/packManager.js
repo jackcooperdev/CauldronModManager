@@ -1,8 +1,5 @@
 const fs = require("fs");
 const path = require("path");
-const { exec } = require("node:child_process"); // Node.js v16+ allows "node:" prefix for built-in modules
-const { parse } = require("smol-toml");
-const StreamZip = require("node-stream-zip");
 const JSZip = require("jszip");
 const { rimraf, rimrafSync } = require('rimraf')
 const { getCfData, getMrData, getCData } = require("../libs/apiCommunication");
@@ -179,7 +176,6 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
                 let classInfo = CF_CLASSES.find(obj => obj.id === actualClass);
                 actualClass = classInfo.name.toLowerCase();
             } else {
-                console.log(actualClass)
                 actualClass = MR_CLASSES[actualClass];
             }
             fs.mkdirSync(path.join(MODPACK_PATH, actualClass), { recursive: true })
@@ -247,17 +243,8 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
 
 
 
-async function createPack(fileData, dir, packwizLoc) {
+async function createPack(fileData, dir) {
     return new Promise(async (resolve, reject) => {
-        if (!packwizLoc) {
-            console.log(packwizLoc)
-            packwizLoc = await which("packwiz");
-            if (!packwizLoc) {
-                reject("No Packwiz exe found! Please Add to Path or declare manually");
-                return;
-            }
-        }
-
         const packPath = path.join(dir, fileData.name);
 
         // Temp
@@ -317,23 +304,8 @@ async function createPack(fileData, dir, packwizLoc) {
             reject(e)
         }
 
-        /*  packwizLoc = path.resolve(packwizLoc.toString());
- 
-         const loaderVer = fileData.loaderVersion
-             ? `--${fileData.loader}-version ${fileData.loaderVersion}`
-             : `--${fileData.loader}-latest`;
- 
-         const command = `init -r --author ${fileData.author.replace(/\s/g, "")} ${loaderVer} --mc-version ${fileData.minecraftVersion} --modloader ${fileData.loader} --name ${fileData.name.replace(/\s/g, "")} --version ${fileData.version}`;
-         await runPackwiz(packwizLoc, command, packPath, true);
- 
-         if (fileData.mods) {
-             for (let mod of fileData.mods) {
-                 const modCmd = `${mod.source} add ${mod.slug} --yes`;
-                 await runPackwiz(packwizLoc, modCmd, packPath, true);
-             }
-         }
- 
-         resolve(true); */
+        const packInfo = await getPackInfo(packPath);
+        resolve(packInfo)
     });
 }
 
@@ -351,6 +323,45 @@ function findMod(data, modName) {
     const pattern = new RegExp(`(^|/)${escapeRegex(modName)}-cmm\\.json$`);
     return data.find(obj => pattern.test(obj.file));
 }
+
+async function removeMods(packPath, mods) {
+    return new Promise(async (resolve, reject) => {
+        // Get Current Pack
+
+        let pack = JSON.parse(fs.readFileSync(path.join(packPath, 'pack.json')).toString());
+        let modList = mods;
+
+        // Get Current Index
+        let indexTracker = JSON.parse(fs.readFileSync(path.join(packPath, 'index.json')).toString());
+
+        let toPurge = []
+
+        for (let mod of modList) {
+            let found = findMod(indexTracker, mod.slug);
+            if (found) {
+                indexTracker = indexTracker.filter(item => item !== found);
+                toPurge.push(found)
+            }
+        };
+
+        for (let purge of toPurge) {
+            fs.rmSync(path.join(packPath, purge.file));
+        };
+
+
+        const jsonContent = JSON.stringify(indexTracker, null, 2);
+        const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+        fs.writeFileSync(path.join(packPath, 'index.json'), jsonContent);
+
+        pack.index.hash = hash;
+        fs.writeFileSync(path.join(packPath, 'pack.json'), JSON.stringify(pack, null, 2));
+
+        resolve(true);
+
+
+    })
+}
+
 
 
 async function addMods(packPath, mods) {
@@ -549,4 +560,4 @@ async function addMods(packPath, mods) {
 
 
 
-module.exports = { importFromFolder, createPack, addMods }
+module.exports = { importFromFolder, createPack, addMods, removeMods }
