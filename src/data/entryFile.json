@@ -1,0 +1,16 @@
+{
+  "manifest.json": {
+    "key": "cf",
+    "name":"curseforge",
+    "pId": "projectID",
+    "title":"name",
+    "fKey": {"loc": "latestFiles", "id": "fileID"}
+  },
+  "modrinth.index.json": {
+    "key": "mr",
+    "pId": "projectId",
+    "name":"modrinth",
+    "title":"title",
+    "fKey": {"loc": "versions", "id": "fileId"}
+  }
+}
