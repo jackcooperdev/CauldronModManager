@@ -12,7 +12,7 @@ async function getBulkMods(format, payload) {
             let cf2Out = await getCfData('mods/files', { fileIds: payload}, 'post');
             return cf2Out.data;
         default:
-            console.log('droped to def')
+            console.log('fatal')
             return false;
     }
 }

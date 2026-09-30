@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getPackInfo, getPackIndex } = require('../libs/packTools');
-const { validate, bulkValidate } = require('../libs/fileValidator');
+const { validate, hashFolder } = require('../libs/fileValidator');
 const { verifyInstallation } = require('../tools/bulkDownloader');
 
 
@@ -24,27 +24,47 @@ async function installMods(packPath, destPath) {
         if (fs.existsSync(path.join(destPath, 'modpack.cmm'))) {
             let cmmData = JSON.parse(atob(fs.readFileSync(path.join(destPath, 'modpack.cmm')).toString()));
             if (packData.index.hash === cmmData.relatesTo) {
-                //return resolve(true);
+                ///let folderHash = await hashFolder(destPath, packData.versions.minecraft)
+                if (cmmData.folderHash === 'abc') {
+                    return resolve(true);
+                }
             }
         }
 
         let metaFiles = index.filter(obj => obj.metafile);
         let overrideFiles = index.filter(obj => !obj.metafile);
 
-        console.log('checks')
-
         // Check For Any Files that should not be there;
 
-        const entries = await fs.readdirSync(destPath, { recursive: true, withFileTypes: true });
-        let manualRemoval = ['modpack.cmm','plain.json']
+        const userDirs = new Set([
+            'mods', 'saves', 'resourcepacks', 'shaderpacks', 'datapacks'
+        ]);
+
+        const ignoredDirs = [
+            path.join('mods', packData.versions.minecraft)
+        ];
+
+        const manualRemoval = new Set(['modpack.cmm', 'plain.json']);
+
+        const entries = fs.readdirSync(destPath, { recursive: true, withFileTypes: true });
+
         const allFiles = entries
             .filter(e => e.isFile())
-            .filter(e => !manualRemoval.includes(e.name))
+            .filter(e => !manualRemoval.has(e.name))
             .map(e => path.join(e.parentPath, e.name))
-            
-        
+            .filter(fullPath => {
+                const rel = path.relative(destPath, fullPath);
+                const [topLevel, ...rest] = rel.split(path.sep);
+
+                if (rest.length === 0 || !userDirs.has(topLevel)) return false;
+
+                // skip anything inside an ignored folder
+                return !ignoredDirs.some(dir => rel.startsWith(dir + path.sep));
+            });
+
+
         //process.exit(0)
-         let expectedFiles = []
+        let expectedFiles = []
         // Transfer Override Files
         for (let file of overrideFiles) {
             let smolPath = file.file
@@ -61,7 +81,7 @@ async function installMods(packPath, destPath) {
 
 
         let queue = [];
-       
+
 
         let newIndexTracker = overrideFiles;
 
@@ -80,7 +100,7 @@ async function installMods(packPath, destPath) {
                 const a = Number(str.slice(0, -3)); // 3039
                 const b = Number(str.slice(-3));    // 37  (from "037")
                 let obj = {
-                    "origin": `https://mediafilez.forgecdn.net/files/${a}/${b}/${fileData.filename}`,
+                    "origin": `https://edge.forgecdn.net/files/${a}/${b}/${fileData.filename}`,
                     "destination": path.join(destPath, dir),
                     "fileName": `${fileData.filename}`,
                     "sha1": fileData.download.hash
@@ -89,34 +109,44 @@ async function installMods(packPath, destPath) {
                 queue.push(obj)
                 expectedFiles.push(path.join(destPath, dir, fileData.filename))
                 newIndexTracker.push(newTrackerObj)
-            };
-
-
-
+            } else {
+                let obj = {
+                    "origin": `https://cdn.modrinth.com/data/${fileData.projectId}/versions/${fileData.fileId}/${fileData.filename}`,
+                    "destination": path.join(destPath, dir),
+                    "fileName": `${fileData.filename}`,
+                    "sha1": fileData.download.hash
+                }
+                newTrackerObj['fileInfo'] = obj;
+                queue.push(obj)
+                expectedFiles.push(path.join(destPath, dir, fileData.filename))
+                newIndexTracker.push(newTrackerObj)
+            }
         };
-
         await verifyInstallation(queue);
 
-        const actualSet = new Set(allFiles);
-        const expectedSet = new Set(expectedFiles);
+        // TODO Respect First Boot (Recreate File List after first boot);
 
+    /*     const expectedSet = new Set(expectedFiles);
 
+        const onlyInActual = allFiles.filter(item => !expectedSet.has(item))
+        console.log(onlyInActual)
+        // Remove Extra Files
+        for (let remQueue of onlyInActual) {
+            fs.rmSync(remQueue);
+        }
 
+        let folderHash = await hashFolder(destPath, packData.versions.minecraft) */
 
         // Post Download Create CMM File Containing current Index.json;
 
         let finalToWrite = {
             relatesTo: packData.index.hash,
-            index: newIndexTracker
+            index: newIndexTracker,
+            folderHash:'abc'
         }
         fs.writeFileSync(path.join(destPath, 'modpack.cmm'), btoa(JSON.stringify(finalToWrite, null, 2)))
         fs.writeFileSync(path.join(destPath, 'plain.json'), JSON.stringify(finalToWrite, null, 2))
-
-
-        //https://mediafilez.forgecdn.net/files/2405/32/DeathQuotes-1.2.0-mc1.7.10-forge.jar
-
         resolve(true)
     })
 }
-//node index importMPack --premade aHR0cHM6Ly9tZWRpYWZpbGV6LmZvcmdlY2RuLm5ldC9maWxlcy8zNDcwLzg5MC9zbWFsbF9tb2RwYWNrLnppcDtmMGM4NTYwNDg1ZTkwNWVlN2EyNTNkYjIwYWNkMmFhNjNiYWI5NzE2
 module.exports = { installMods }
