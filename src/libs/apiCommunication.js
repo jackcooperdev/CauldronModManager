@@ -2,7 +2,7 @@ const axios = require('axios')
 const CF_SOURCE = "https://cf.polymc.org/api";
 const CF_API = "https://api.curseforge.com/v1/"
 const MR_API = "https://api.modrinth.com/v2/"
-const C_RES_API = "http://solvershost.tail80e443.ts.net:3300/"
+const C_RES_API = "https://resources.cauldronmc.com/"
 
 let CF_KEY = undefined;
 
