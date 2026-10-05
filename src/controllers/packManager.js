@@ -567,4 +567,4 @@ async function addMods(packPath, mods) {
 
 
 
-module.exports = { importFromFolder, createPack, addMods, removeMods }
+module.exports = { importFromFolder, createPack, addMods, removeMods, getPackInfo }
