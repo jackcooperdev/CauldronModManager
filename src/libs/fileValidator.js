@@ -85,43 +85,4 @@ async function getHash(path, algo = 'sha256') {
     }
 }
 
-async function hashFolder(destPath, version = '1.0') {
-    const userDirs = new Set([
-        'mods', 'saves', 'resourcepacks', 'shaderpacks', 'datapacks'
-    ]);
-
-    const ignoredDirs = [
-        path.join('mods', version)
-    ];
-
-    const manualRemoval = new Set(['modpack.cmm', 'plain.json']);
-
-    const entries = fs.readdirSync(destPath, { recursive: true, withFileTypes: true });
-
-    const files = entries
-        .filter(e => e.isFile())
-        .filter(e => !manualRemoval.has(e.name))
-        .map(e => path.join(e.parentPath, e.name))
-        .filter(fullPath => {
-            const rel = path.relative(destPath, fullPath);
-            const [topLevel, ...rest] = rel.split(path.sep);
-
-            if (rest.length === 0 || !userDirs.has(topLevel)) return false;
-
-            // skip anything inside an ignored folder
-            return !ignoredDirs.some(dir => rel.startsWith(dir + path.sep));
-        });
-
-    const folderHash = crypto.createHash('sha256');
-
-    for (const file of files) {
-        const relative = path.relative(destPath, file).replaceAll('\\', '/');
-        folderHash.update(relative + '\0');          // include the path so renames change the hash
-        folderHash.update(await getHash(file) + '\0');
-    }
-
-    return folderHash.digest('hex');
-}
-
-
-module.exports = { validate, bulkValidate, download, hashFolder }
+module.exports = { validate, bulkValidate, download, getHash }

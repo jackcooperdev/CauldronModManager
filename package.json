@@ -1,6 +1,6 @@
 {
   "name": "@jackcooperdev/cmm",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "type": "commonjs",
   "description": "MC Mod Manager for NodeJS (Used in Cauldron)",
   "main": "src/index.js",
@@ -23,6 +23,7 @@
     "bluebird": "^3.7.2",
     "jszip": "^3.10.2",
     "nodejs-file-downloader": "^4.13.0",
+    "random-words": "^2.0.1",
     "rimraf": "^6.1.3"
   }
 }

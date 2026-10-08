@@ -1,9 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const { getPackInfo, getPackIndex } = require('../libs/packTools');
-const { validate, hashFolder } = require('../libs/fileValidator');
+const { validate } = require('../libs/fileValidator');
 const { verifyInstallation } = require('../tools/bulkDownloader');
-
+const crypto = require('crypto')
 
 async function installMods(packPath, destPath) {
     return new Promise(async (resolve, reject) => {
@@ -18,26 +18,13 @@ async function installMods(packPath, destPath) {
 
         let index = await getPackIndex(packPath)
 
-
-
-        // Check For CMM File In Dest
-        if (fs.existsSync(path.join(destPath, 'modpack.cmm'))) {
-            let cmmData = JSON.parse(atob(fs.readFileSync(path.join(destPath, 'modpack.cmm')).toString()));
-            if (packData.index.hash === cmmData.relatesTo) {
-                ///let folderHash = await hashFolder(destPath, packData.versions.minecraft)
-                if (cmmData.folderHash === 'abc') {
-                    return resolve(true);
-                }
-            }
-        }
-
         let metaFiles = index.filter(obj => obj.metafile);
         let overrideFiles = index.filter(obj => !obj.metafile);
 
         // Check For Any Files that should not be there;
 
         const userDirs = new Set([
-            'mods', 'saves', 'resourcepacks', 'shaderpacks', 'datapacks'
+            'mods'
         ]);
 
         const ignoredDirs = [
@@ -63,27 +50,42 @@ async function installMods(packPath, destPath) {
             });
 
 
-        //process.exit(0)
-        let expectedFiles = []
-        // Transfer Override Files
+        let expectedFiles = [];
+
         for (let file of overrideFiles) {
             let smolPath = file.file
             const normalized = path.normalize(smolPath.replace(/[\\/]+/g, path.sep));
             const dir = path.dirname(normalized);
-            fs.mkdirSync(path.join(destPath, dir), { recursive: true })
-            fs.copyFileSync(path.join(packPath, smolPath), path.join(destPath, smolPath));
-            expectedFiles.push(path.join(destPath, smolPath))
-            let result = await validate(file, destPath)
-            if (result !== 'pass') {
-                console.log('error transfering ' + file.file)
-            };
+            fs.mkdirSync(path.join(destPath, dir), { recursive: true });
+
+            let doesFileAlreadyExist = fs.existsSync(path.join(destPath, smolPath));
+            if (doesFileAlreadyExist) {
+                let result = await validate(file, destPath, 'sha1');
+
+                if (result !== 'pass') {
+                    overrideFiles = overrideFiles.filter(function (obj) {
+                        return obj !== file;
+                    });
+                } else {
+                    if (smolPath.includes('mods')) {
+                        expectedFiles.push(path.join(destPath, smolPath))
+                    }
+                }
+            } else {
+                fs.copyFileSync(path.join(packPath, smolPath), path.join(destPath, smolPath));
+                if (smolPath.includes('mods')) {
+                    expectedFiles.push(path.join(destPath, smolPath))
+                }
+                let result = await validate(file, destPath, 'sha1')
+                if (result !== 'pass') {
+                    console.log('error transfering ' + file.file)
+                };
+            }
+
+
         };
-
-
+        //process.exit(0)
         let queue = [];
-
-
-        let newIndexTracker = overrideFiles;
 
         for (let file of metaFiles) {
             let smolPath = file.file;
@@ -91,8 +93,6 @@ async function installMods(packPath, destPath) {
             const dir = path.dirname(normalized);
             let fileData = JSON.parse(fs.readFileSync(path.join(packPath, file.file)).toString())
             let downloadType = fileData.download.mode.replace("metadata:", "");
-
-            let newTrackerObj = file;
 
             if (downloadType === 'curseforge') {
                 const str = String(fileData.fileId);
@@ -105,10 +105,8 @@ async function installMods(packPath, destPath) {
                     "fileName": `${fileData.filename}`,
                     "sha1": fileData.download.hash
                 }
-                newTrackerObj['fileInfo'] = obj;
                 queue.push(obj)
                 expectedFiles.push(path.join(destPath, dir, fileData.filename))
-                newIndexTracker.push(newTrackerObj)
             } else {
                 let obj = {
                     "origin": `https://cdn.modrinth.com/data/${fileData.projectId}/versions/${fileData.fileId}/${fileData.filename}`,
@@ -116,36 +114,29 @@ async function installMods(packPath, destPath) {
                     "fileName": `${fileData.filename}`,
                     "sha1": fileData.download.hash
                 }
-                newTrackerObj['fileInfo'] = obj;
                 queue.push(obj)
                 expectedFiles.push(path.join(destPath, dir, fileData.filename))
-                newIndexTracker.push(newTrackerObj)
             }
         };
+
+
         await verifyInstallation(queue);
 
-        // TODO Respect First Boot (Recreate File List after first boot);
+        const expectedSet = new Set(expectedFiles);
 
-    /*     const expectedSet = new Set(expectedFiles);
+        const toDelete = allFiles.filter(item => !expectedSet.has(item))
 
-        const onlyInActual = allFiles.filter(item => !expectedSet.has(item))
-        console.log(onlyInActual)
-        // Remove Extra Files
-        for (let remQueue of onlyInActual) {
-            fs.rmSync(remQueue);
+        for (let rmFile of toDelete) {
+            fs.rmSync(rmFile)
         }
-
-        let folderHash = await hashFolder(destPath, packData.versions.minecraft) */
-
-        // Post Download Create CMM File Containing current Index.json;
 
         let finalToWrite = {
             relatesTo: packData.index.hash,
-            index: newIndexTracker,
-            folderHash:'abc'
+            index
         }
         fs.writeFileSync(path.join(destPath, 'modpack.cmm'), btoa(JSON.stringify(finalToWrite, null, 2)))
         fs.writeFileSync(path.join(destPath, 'plain.json'), JSON.stringify(finalToWrite, null, 2))
+
         resolve(true)
     })
 }
