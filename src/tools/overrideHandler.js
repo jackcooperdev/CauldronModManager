@@ -37,7 +37,7 @@ async function handleOverrides(zip,zipFiles,MODPACK_PATH) {
             let finalDest = path.join(filePath, fileName)
             let innerDest = path.join(file.split("/").slice(0, -1).join("/"), fileName)
             fs.writeFileSync(finalDest, content);
-            const hash = crypto.createHash("sha256").update(content).digest("hex");
+            const hash = crypto.createHash("sha1").update(content).digest("hex");
             let newIndexItem = {
                 file: innerDest,
                 hash

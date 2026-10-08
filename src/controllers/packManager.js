@@ -7,11 +7,11 @@ const crypto = require("crypto");
 const CF_CLASSES = require('../data/cfClasses.json')
 const MR_CLASSES = require('../data/mrClasses.json')
 const entryFileConversion = require('../data/entryFile.json');
-
+const { generate } = require('random-words')
 const { convertModrinthURLtoIDS } = require("../tools/formatConverter");
 const { getBulkMods } = require("../tools/bulkModGetter");
 const { handleOverrides } = require("../tools/overrideHandler");
-const { getPackInfo, verifyModpackIntegrity } = require("../libs/packTools");
+const { getPackInfo, verifyModpackIntegrity, getPackIndex } = require("../libs/packTools");
 
 
 
@@ -30,9 +30,27 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
             return;
         }
 
+        let name_over = nameOverride || generate(5)
+        name_over = name_over.toLowerCase();
+        const MODPACK_PATH = path.join(outPath, name_over)
+
 
         const zipBuffer = await fs.readFileSync(zipPath);
         const zipHash = crypto.createHash("sha256").update(zipBuffer).digest("hex");
+        if (fs.existsSync(MODPACK_PATH)) {
+            let packInfo = await getPackInfo(MODPACK_PATH)
+            if (packInfo.sourceHash === zipHash) {
+                console.log(`Pack has already been imported (${zipHash})`);
+                return resolve(packInfo)
+            } else {
+                await rimraf(MODPACK_PATH)
+            }
+        }
+
+        fs.mkdirSync(MODPACK_PATH, { recursive: true })
+
+
+
 
 
         const zip = await JSZip.loadAsync(zipBuffer);
@@ -51,30 +69,6 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
         // Get Manifest File
         let manifestFileRaw = await zip.files[entryFile].async('string');
         let manifestFile = JSON.parse(manifestFileRaw);
-
-
-
-        let name_over = nameOverride || manifestFile.name.replace(" ","_")
-        name_over = name_over.toLowerCase();
-        const MODPACK_PATH = path.join(outPath, name_over)
-
-
-        if (fs.existsSync(MODPACK_PATH)) {
-            let packInfo = await getPackInfo(MODPACK_PATH)
-            if (packInfo.sourceHash === zipHash) {
-                console.log(`Pack has already been imported (${zipHash})`);
-                let validatePack = await verifyModpackIntegrity(MODPACK_PATH);
-                if (validatePack.passed) {
-                    return resolve(packInfo)
-                } else {
-                    await rimraf(MODPACK_PATH)
-                }
-            } else {
-                await rimraf(MODPACK_PATH)
-            }
-        }
-
-        fs.mkdirSync(MODPACK_PATH, { recursive: true })
 
 
         // Extract and Build File Data
@@ -191,7 +185,7 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
 
             fs.writeFileSync(filePath, jsonContent);
 
-            const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+            const hash = crypto.createHash("sha1").update(jsonContent).digest("hex");
             let newIndexItem = {
                 file: `${actualClass}/${mod.slug}-cmm.json`,
                 metafile: true,
@@ -202,7 +196,7 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
 
         // Write index file
         const jsonContent = JSON.stringify(indexTracker, null, 2);
-        const hash = crypto.createHash("sha256").update(jsonContent).digest("hex");
+        const hash = crypto.createHash("sha1").update(jsonContent).digest("hex");
         fs.writeFileSync(path.join(MODPACK_PATH, 'index.json'), jsonContent);
 
         // Extract MC and L Verison
@@ -215,10 +209,11 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
             l = manifestFile.minecraft.modLoaders[0].id.split("-")[0];
             lv = manifestFile.minecraft.modLoaders[0].id.split("-")[1];
         } else {
-            let depObjs = Object.keys(manifestFile.dependencies)
-            v = manifestFile.dependencies[depObjs[0]];
-            l = depObjs[1];
-            lv = manifestFile.dependencies[depObjs[1]]
+            let depObjs = Object.keys(manifestFile.dependencies);
+            let nonMcDep = depObjs.find(obj => obj !== 'minecraft');
+            v = manifestFile.dependencies['minecraft'];
+            l = nonMcDep;
+            lv = manifestFile.dependencies[nonMcDep]
         }
 
 
@@ -344,7 +339,7 @@ async function removeMods(packPath, mods) {
         let toPurge = []
 
         for (let mod of modList) {
-            let found = findMod(indexTracker, mod.slug);
+            let found = findMod(indexTracker, mod);
             if (found) {
                 indexTracker = indexTracker.filter(item => item !== found);
                 toPurge.push(found)
@@ -567,4 +562,4 @@ async function addMods(packPath, mods) {
 
 
 
-module.exports = { importFromFolder, createPack, addMods, removeMods, getPackInfo }
+module.exports = { importFromFolder, createPack, addMods, removeMods, getPackInfo, getPackIndex }
