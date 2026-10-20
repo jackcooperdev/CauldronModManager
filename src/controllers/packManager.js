@@ -30,7 +30,7 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
             return;
         }
 
-        let name_over = nameOverride || generate(5)
+        let name_over = nameOverride || generate(5).join("-");
         name_over = name_over.toLowerCase();
         const MODPACK_PATH = path.join(outPath, name_over)
 
@@ -248,6 +248,10 @@ async function importFromFolder(zipPath, outPath, nameOverride) {
 async function createPack(fileData, dir) {
     return new Promise(async (resolve, reject) => {
         const packPath = path.join(dir, fileData.name);
+        // Check For Vanilla Loader and reject
+        if (fileData.loader === 'vanilla') {
+            return reject('invalid_loader')
+        };
 
         // Temp
         if (fs.existsSync(packPath)) {
@@ -260,15 +264,21 @@ async function createPack(fileData, dir) {
         let index = [];
         const jsonContent = JSON.stringify(index, null, 2);
         const indexHash = crypto.createHash("sha256").update(jsonContent).digest("hex");
-        fs.writeFileSync(path.join(packPath, 'index.json'), jsonContent)
+        fs.writeFileSync(path.join(packPath, 'index.json'), jsonContent);
+
+        // Convert Release and Snapshot MVersion to real version no
+        if (fileData.minecraftVersion=== 'release' || fileData.minecraftVersion === 'snapshot') {
+            let vManifest = await getCData(`version_manifest.json`);
+            fileData.minecraftVersion = vManifest.latest[fileData.minecraftVersion];
+        }
 
         // Get Loader Version
         let curLoadVersion = fileData.loaderVersion;
 
-        if (!curLoadVersion || curLoadVersion.includes(['default', 'latest', 'release'])) {
+        if (!curLoadVersion ||['default', 'latest', 'release'].includes(curLoadVersion)) {
             let resData = await getCData(`loaders/${fileData.loader}/version_manifest.json`);
             let verManifest = resData.versions.find(obj => obj.id === fileData.minecraftVersion);
-
+            //console.log(resData.versions)
             if (!verManifest) {
                 return reject('version not valid');
             };
@@ -465,14 +475,14 @@ async function addMods(packPath, mods) {
                 let modHasValidVersion = (modData.game_versions.includes(pack.versions.minecraft) && modData.loaders.includes(pack.versions.loader.type));
 
                 if (!modHasValidVersion) {
-                    reject('mod has no valid version for this mc version / loader');
+                    return reject('mod has no valid version for this mc version / loader');
                 };
 
                 let fileData = await getMrData(`project/${mod.slug}/version?loaders=${JSON.stringify([pack.versions.loader.type])}&game_versions=${JSON.stringify([pack.versions.minecraft])}`);
 
 
                 if (fileData.length === 0) {
-                    reject('mod has no valid version for this mc version / loader');
+                    return reject('mod has no valid version for this mc version / loader');
                 };
 
                 let latestValidVersion = fileData[0];
